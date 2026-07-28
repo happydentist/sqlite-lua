@@ -28,17 +28,18 @@ jobs:
           mingw-w64-x86_64-gcc
           mingw-w64-x86_64-sqlite3
 
-    # 關鍵步驟：直接修改 Makefile 開啟 Lua 5.2 相容性
-    - name: Enable Lua52 Compatibility (Windows)
+    # 核心修正：直接在原始碼 src/lua.c 的最頂端塞入相容性巨集，徹底絕殺未定義錯誤
+    - name: Force Inject Lua52 Macro to Source (Windows)
       shell: msys2 {0}
       run: |
-        sed -i 's/#XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT/XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT/' luajit-src/src/Makefile
+        sed -i '1s/^/#define LUAJIT_ENABLE_LUA52COMPAT 1\n/' src/lua.c
+        head -n 5 src/lua.c
 
     - name: Build LuaJIT Static Lib (Windows)
       shell: msys2 {0}
       run: |
         cd luajit-src
-        make BUILDMODE=static
+        make BUILDMODE=static XCFLAGS="-DLUAJIT_ENABLE_LUA52COMPAT"
         cd ..
 
     - name: Build Static DLL with LuaJIT
@@ -81,16 +82,16 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libsqlite3-dev
 
-    # 關鍵步驟：直接修改 Makefile 開啟 Lua 5.2 相容性
-    - name: Enable Lua52 Compatibility (Linux)
+    # 核心修正：直接在原始碼 src/lua.c 的最頂端塞入相容性巨集，徹底絕殺未定義錯誤
+    - name: Force Inject Lua52 Macro to Source (Linux)
       run: |
-        sed -i 's/#XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT/XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT/' luajit-src/src/Makefile
+        sed -i '1s/^/#define LUAJIT_ENABLE_LUA52COMPAT 1\n/' src/lua.c
+        head -n 5 src/lua.c
 
     - name: Build LuaJIT Static Lib with fPIC (Linux)
       run: |
         cd luajit-src
-        # 移除了會產生衝突的 XCFLAGS 傳參，改用修改好的 Makefile 跑編譯
-        make BUILDMODE=static CFLAGS="-O2 -fPIC"
+        make BUILDMODE=static CFLAGS="-O2 -fPIC -DLUAJIT_ENABLE_LUA52COMPAT"
         cd ..
 
     - name: Build Static SO with LuaJIT
