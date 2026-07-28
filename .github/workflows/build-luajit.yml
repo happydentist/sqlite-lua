@@ -1,0 +1,113 @@
+name: Ultimate Static Build with LuaJIT
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  # === Windows LuaJIT 靜態編譯 (獨立 DLL) ===
+  build-windows-luajit:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 1. 複製 LuaJIT 官方儲存庫 (使用穩定的 v2.1 分支)
+    - name: Checkout LuaJIT Source
+      uses: actions/checkout@v4
+      with:
+        repository: LuaJIT/LuaJIT
+        ref: v2.1
+        path: luajit-src
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          make
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-sqlite3
+
+    # 2. 在 MSYS2 中編譯 Windows 專用的 LuaJIT 靜態庫 (libluajit.a)
+    - name: Build LuaJIT Static Lib (Windows)
+      shell: msys2 {0}
+      run: |
+        cd luajit-src
+        # 使用 MinGW 模式編譯，不生成動態 DLL，只取靜態庫
+        make BUILDMODE=static
+        cd ..
+
+    # 3. 結合自建的 libluajit.a 編譯延伸模組
+    - name: Build Static DLL with LuaJIT
+      shell: msys2 {0}
+      run: |
+        # 尋找產出的 libluajit.a 檔案
+        LUAJIT_LIB=$(find luajit-src/src -name "libluajit.a" | head -n 1)
+        echo "Found LuaJIT static lib: $LUAJIT_LIB"
+        
+        # 編譯指令：引入 luajit-src/src 標頭檔目錄
+        gcc -O2 -shared -o sqlite-lua-luajit.dll src/lua.c \
+          -Iluajit-src/src \
+          -I/mingw64/include \
+          $LUAJIT_LIB \
+          -static-libgcc \
+          -Wl,--export-all-symbols
+
+    - name: Upload Windows DLL
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-luajit-windows
+        path: |
+          *.dll
+          README.md
+
+  # === Linux LuaJIT 靜態編譯 (獨立 SO) ===
+  build-linux-luajit:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 1. 複製 LuaJIT 官方儲存庫
+    - name: Checkout LuaJIT Source
+      uses: actions/checkout@v4
+      with:
+        repository: LuaJIT/LuaJIT
+        ref: v2.1
+        path: luajit-src
+
+    - name: Install System SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libsqlite3-dev
+
+    # 2. 編譯帶有 -fPIC 的 Linux 專用 LuaJIT 靜態庫
+    - name: Build LuaJIT Static Lib with fPIC (Linux)
+      run: |
+        cd luajit-src
+        # 必須強制傳遞 CFLAGS="-fPIC" 給 LuaJIT 的編譯器，否則 Linux 拒絕連結
+        make BUILDMODE=static CFLAGS="-O2 -fPIC"
+        cd ..
+
+    # 3. 結合帶有 fPIC 的 libluajit.a 編譯延伸模組
+    - name: Build Static SO with LuaJIT
+      run: |
+        LUAJIT_LIB=$(find luajit-src/src -name "libluajit.a" | head -n 1)
+        echo "Found LuaJIT static lib: $LUAJIT_LIB"
+        
+        gcc -O2 -shared -fPIC -o sqlite-lua-luajit.so src/lua.c \
+          -Iluajit-src/src \
+          $LUAJIT_LIB
+
+    - name: Upload Linux SO
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-luajit-linux
+        path: |
+          *.so
+          README.md
