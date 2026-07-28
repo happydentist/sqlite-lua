@@ -1,0 +1,104 @@
+name: 🚀 Build Static - Lua 5.4 or 5.5 Latest
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # === Windows 靜態編譯 (獨立 DLL) ===
+  build-windows-latest-lua:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 1. 直接拉取官方最新的 Lua 5.5.0 原始碼 (若要 5.4.x 請將 ref 改為 v5.4.7)
+    - name: Checkout Latest Lua Source
+      uses: actions/checkout@v4
+      with:
+        repository: lua/lua
+        ref: v5.5.0
+        path: lua-src
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-sqlite3
+
+    # 2. 直接編譯新版 Lua 靜態庫
+    - name: Build New Lua Static Lib (Windows)
+      shell: msys2 {0}
+      run: |
+        cd lua-src
+        gcc -O2 -c *.c
+        rm -f lua.o luac.o
+        ar rcu liblua.a *.o
+        ranlib liblua.a
+        cd ..
+
+    # 3. 連結新版 liblua.a，此時已不需任何補丁參數
+    - name: Build Static DLL with Latest Lua
+      shell: msys2 {0}
+      run: |
+        gcc -O2 -shared -o sqlite-lua-latest.dll src/lua.c \
+          -Ilua-src \
+          -I/mingw64/include \
+          lua-src/liblua.a \
+          -static-libgcc \
+          -Wl,--export-all-symbols
+
+    - name: Upload Windows DLL
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-v55-windows
+        path: |
+          *.dll
+          README.md
+
+  # === Linux 靜態編譯 (獨立 SO) ===
+  build-linux-latest-lua:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 1. 拉取官方最新的 Lua 5.5.0 原始碼
+    - name: Checkout Latest Lua Source
+      uses: actions/checkout@v4
+      with:
+        repository: lua/lua
+        ref: v5.5.0
+        path: lua-src
+
+    - name: Install System SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libsqlite3-dev
+
+    # 2. 編譯帶有 -fPIC 的新版 Lua 靜態庫
+    - name: Build New Lua Static Lib with fPIC (Linux)
+      run: |
+        cd lua-src
+        gcc -O2 -fPIC -c *.c
+        rm -f lua.o luac.o
+        ar rcu liblua.a *.o
+        ranlib liblua.a
+        cd ..
+
+    # 3. 產出 Linux SO
+    - name: Build Static SO with Latest Lua
+      run: |
+        gcc -O2 -shared -fPIC -o sqlite-lua-latest.so src/lua.c \
+          -Ilua-src \
+          lua-src/liblua.a
+
+    - name: Upload Linux SO
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-v55-linux
+        path: |
+          *.so
+          README.md
