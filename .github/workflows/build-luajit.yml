@@ -1,10 +1,6 @@
-name: Ultimate Static Build with LuaJIT
+name: ⚡ Build Static - LuaJIT High Performance
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
@@ -15,7 +11,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 1. 複製 LuaJIT 官方儲存庫 (使用穩定的 v2.1 分支)
     - name: Checkout LuaJIT Source
       uses: actions/checkout@v4
       with:
@@ -33,24 +28,20 @@ jobs:
           mingw-w64-x86_64-gcc
           mingw-w64-x86_64-sqlite3
 
-    # 2. 在 MSYS2 中編譯 Windows 專用的 LuaJIT 靜態庫 (libluajit.a)
     - name: Build LuaJIT Static Lib (Windows)
       shell: msys2 {0}
       run: |
         cd luajit-src
-        # 使用 MinGW 模式編譯，不生成動態 DLL，只取靜態庫
-        make BUILDMODE=static
+        # XCFLAGS="-DLUAJIT_ENABLE_LUA52COMPAT" 用於解鎖 lua_compare 與 LUA_OPEQ
+        make BUILDMODE=static XCFLAGS="-DLUAJIT_ENABLE_LUA52COMPAT"
         cd ..
 
-    # 3. 結合自建的 libluajit.a 編譯延伸模組
     - name: Build Static DLL with LuaJIT
       shell: msys2 {0}
       run: |
-        # 尋找產出的 libluajit.a 檔案
         LUAJIT_LIB=$(find luajit-src/src -name "libluajit.a" | head -n 1)
         echo "Found LuaJIT static lib: $LUAJIT_LIB"
         
-        # 編譯指令：引入 luajit-src/src 標頭檔目錄
         gcc -O2 -shared -o sqlite-lua-luajit.dll src/lua.c \
           -Iluajit-src/src \
           -I/mingw64/include \
@@ -73,7 +64,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 1. 複製 LuaJIT 官方儲存庫
     - name: Checkout LuaJIT Source
       uses: actions/checkout@v4
       with:
@@ -86,15 +76,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libsqlite3-dev
 
-    # 2. 編譯帶有 -fPIC 的 Linux 專用 LuaJIT 靜態庫
     - name: Build LuaJIT Static Lib with fPIC (Linux)
       run: |
         cd luajit-src
-        # 必須強制傳遞 CFLAGS="-fPIC" 給 LuaJIT 的編譯器，否則 Linux 拒絕連結
-        make BUILDMODE=static CFLAGS="-O2 -fPIC"
+        # Linux 環境下同樣注入相容性參數，並保持 -fPIC 避免編譯被拒
+        make BUILDMODE=static CFLAGS="-O2 -fPIC" XCFLAGS="-DLUAJIT_ENABLE_LUA52COMPAT"
         cd ..
 
-    # 3. 結合帶有 fPIC 的 libluajit.a 編譯延伸模組
     - name: Build Static SO with LuaJIT
       run: |
         LUAJIT_LIB=$(find luajit-src/src -name "libluajit.a" | head -n 1)
