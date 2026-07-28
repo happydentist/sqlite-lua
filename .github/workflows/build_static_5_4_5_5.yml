@@ -11,7 +11,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 1. 直接拉取官方最新的 Lua 5.5.0 原始碼 (若要 5.4.x 請將 ref 改為 v5.4.7)
     - name: Checkout Latest Lua Source
       uses: actions/checkout@v4
       with:
@@ -28,18 +27,16 @@ jobs:
           mingw-w64-x86_64-gcc
           mingw-w64-x86_64-sqlite3
 
-    # 2. 直接編譯新版 Lua 靜態庫
+    # 關鍵修正：精確列出要編譯的 C 檔案，直接跳過並封印 onelua.c
     - name: Build New Lua Static Lib (Windows)
       shell: msys2 {0}
       run: |
         cd lua-src
-        gcc -O2 -c *.c
-        rm -f lua.o luac.o
+        gcc -O2 -c lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c ltm.c lundump.c lvm.c lzio.c lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c loadlib.c linit.c
         ar rcu liblua.a *.o
         ranlib liblua.a
         cd ..
 
-    # 3. 連結新版 liblua.a，此時已不需任何補丁參數
     - name: Build Static DLL with Latest Lua
       shell: msys2 {0}
       run: |
@@ -65,7 +62,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 1. 拉取官方最新的 Lua 5.5.0 原始碼
     - name: Checkout Latest Lua Source
       uses: actions/checkout@v4
       with:
@@ -78,17 +74,15 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libsqlite3-dev
 
-    # 2. 編譯帶有 -fPIC 的新版 Lua 靜態庫
+    # 關鍵修正：Linux 端同樣精確指定檔案，強制帶上 -fPIC 參數
     - name: Build New Lua Static Lib with fPIC (Linux)
       run: |
         cd lua-src
-        gcc -O2 -fPIC -c *.c
-        rm -f lua.o luac.o
+        gcc -O2 -fPIC -c lapi.c lcode.c lctype.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c lmem.c lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c ltm.c lundump.c lvm.c lzio.c lauxlib.c lbaselib.c lcorolib.c ldblib.c liolib.c lmathlib.c loslib.c lstrlib.c ltablib.c lutf8lib.c loadlib.c linit.c
         ar rcu liblua.a *.o
         ranlib liblua.a
         cd ..
 
-    # 3. 產出 Linux SO
     - name: Build Static SO with Latest Lua
       run: |
         gcc -O2 -shared -fPIC -o sqlite-lua-latest.so src/lua.c \
