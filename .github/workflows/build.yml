@@ -1,0 +1,108 @@
+name: Build Static abiliojr SQLite Lua
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  # === Windows 靜態編譯 (獨立 DLL) ===
+  build-windows-static:
+    runs-on: windows-latest
+    steps:
+    # 1. 複製目前的專案代碼 (abiliojr/sqlite-lua)
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. 透過 GitHub 官方 Actions 直接拉取 Lua 5.3.6 原始碼做靜態封裝
+    - name: Checkout Lua 5.3.6 Source
+      uses: actions/checkout@v4
+      with:
+        repository: lua/lua
+        ref: v5.3.6
+        path: lua-src
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-sqlite3
+
+    - name: Build Standard Lua 5.3.6 Static Lib
+      shell: msys2 {0}
+      run: |
+        cd lua-src
+        gcc -O2 -c *.c -DLUA_COMPAT_5_2
+        rm -f lua.o luac.o
+        ar rcu liblua.a *.o
+        ranlib liblua.a
+        cd ..
+
+    - name: Build Static DLL
+      shell: msys2 {0}
+      run: |
+        # 將輸入檔案指定為 src/lua.c，並輸出為 sqlite-lua.dll
+        gcc -O2 -shared -o sqlite-lua.dll src/lua.c \
+          -Ilua-src \
+          -I/mingw64/include \
+          lua-src/liblua.a \
+          -static-libgcc \
+          -Wl,--export-all-symbols
+
+    - name: Upload Windows DLL
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-extension-windows-static
+        path: |
+          *.dll
+          README.md
+
+  # === Linux 靜態編譯 (獨立 SO) ===
+  build-linux-static:
+    runs-on: ubuntu-latest
+    steps:
+    # 1. 複製目前的專案代碼 (abiliojr/sqlite-lua)
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. 透過 GitHub 官方 Actions 直接拉取 Lua 5.3.6 原始碼
+    - name: Checkout Lua 5.3.6 Source
+      uses: actions/checkout@v4
+      with:
+        repository: lua/lua
+        ref: v5.3.6
+        path: lua-src
+
+    - name: Install System SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libsqlite3-dev
+
+    - name: Build Lua 5.3.6 with fPIC
+      run: |
+        cd lua-src
+        gcc -O2 -fPIC -c *.c -DLUA_COMPAT_5_2
+        rm -f lua.o luac.o
+        ar rcu liblua.a *.o
+        ranlib liblua.a
+        cd ..
+
+    - name: Build Static SO
+      run: |
+        # 將輸入檔案指定為 src/lua.c，並輸出為 sqlite-lua.so
+        gcc -O2 -shared -fPIC -o sqlite-lua.so src/lua.c \
+          -Ilua-src \
+          lua-src/liblua.a
+
+    - name: Upload Linux SO
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-extension-linux-static
+        path: |
+          *.so
+          README.md
