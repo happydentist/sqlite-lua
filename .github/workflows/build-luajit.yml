@@ -28,18 +28,18 @@ jobs:
           mingw-w64-x86_64-gcc
           mingw-w64-x86_64-sqlite3
 
-    # 核心修正：直接在原始碼 src/lua.c 的最頂端塞入相容性巨集，徹底絕殺未定義錯誤
-    - name: Force Inject Lua52 Macro to Source (Windows)
+    # 關鍵必勝步驟：直接在代碼頂端補上 LuaJIT 缺少的 5.2/5.3 巨集函數對應 (Polyfill)
+    - name: Inject Compatibility Polyfill (Windows)
       shell: msys2 {0}
       run: |
-        sed -i '1s/^/#define LUAJIT_ENABLE_LUA52COMPAT 1\n/' src/lua.c
+        sed -i '1s/^/#define LUA_OPEQ 0\n#define lua_compare(L,i1,i2,op) (op == LUA_OPEQ ? lua_equal(L,i1,i2) : 0)\n/' src/lua.c
         head -n 5 src/lua.c
 
     - name: Build LuaJIT Static Lib (Windows)
       shell: msys2 {0}
       run: |
         cd luajit-src
-        make BUILDMODE=static XCFLAGS="-DLUAJIT_ENABLE_LUA52COMPAT"
+        make BUILDMODE=static
         cd ..
 
     - name: Build Static DLL with LuaJIT
@@ -82,16 +82,16 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libsqlite3-dev
 
-    # 核心修正：直接在原始碼 src/lua.c 的最頂端塞入相容性巨集，徹底絕殺未定義錯誤
-    - name: Force Inject Lua52 Macro to Source (Linux)
+    # 關鍵必勝步驟：直接在代碼頂端補上 LuaJIT 缺少的 5.2/5.3 巨集函數對應 (Polyfill)
+    - name: Inject Compatibility Polyfill (Linux)
       run: |
-        sed -i '1s/^/#define LUAJIT_ENABLE_LUA52COMPAT 1\n/' src/lua.c
+        sed -i '1s/^/#define LUA_OPEQ 0\n#define lua_compare(L,i1,i2,op) (op == LUA_OPEQ ? lua_equal(L,i1,i2) : 0)\n/' src/lua.c
         head -n 5 src/lua.c
 
     - name: Build LuaJIT Static Lib with fPIC (Linux)
       run: |
         cd luajit-src
-        make BUILDMODE=static CFLAGS="-O2 -fPIC -DLUAJIT_ENABLE_LUA52COMPAT"
+        make BUILDMODE=static CFLAGS="-O2 -fPIC"
         cd ..
 
     - name: Build Static SO with LuaJIT
