@@ -2,6 +2,151 @@
 
 本文件記錄了如何將 SQLite-Lua 延伸模組（自帶內嵌 Lua 引擎）升級至最新的 **Lua 5.4** 或 **Lua 5.5 版本**。
 
+在新版架構中，由於 Lua 官方已原生支援 `lua_compare` 與 `LUA_OPEQ` 等現代 API，編譯時**完全不需要再使用任何代碼補丁（Polyfill）**，即可直接連結純淨的官方原始碼，實現全平台（Windows DLL / Linux SO）的純靜態獨立封裝。
+
+---
+
+## 🛠️ 1. 全平台靜態編譯設定檔 (`.github/workflows/build-lua55.yml`)
+
+請在專案的 `.github/workflows/` 目錄下建立此檔案。預設配置以 `abiliojr/sqlite-lua` 的 `src/lua.c` 結構為準。若要用於 `hoelzro` 專案，只需將指令中的 `src/lua.c` 改為 `lua.c` 即可。
+
+```yaml
+name: 🚀 Build Static - Lua 5.4 or 5.5 Latest
+
+on:
+  workflow_dispatch: # 完全手動觸發，避免不必要的編譯
+
+jobs:
+  # === Windows 靜態編譯 (獨立 DLL) ===
+  build-windows-latest-lua:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 直接拉取官方最新的 Lua 5.5.0 原始碼 (若要 5.4.x 請將 ref 改為 v5.4.7)
+    - name: Checkout Latest Lua Source
+      uses: actions/checkout@v4
+      with:
+        repository: lua/lua
+        ref: v5.5.0
+        path: lua-src
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-sqlite3
+
+    # 編譯新版 Lua 靜態庫
+    - name: Build New Lua Static Lib (Windows)
+      shell: msys2 {0}
+      run: |
+        cd lua-src
+        gcc -O2 -c *.c
+        rm -f lua.o luac.o
+        ar rcu liblua.a *.o
+        ranlib liblua.a
+        cd ..
+
+    # 連結新版 liblua.a，此時已不需任何 Polyfill 補丁參數
+    - name: Build Static DLL with Latest Lua
+      shell: msys2 {0}
+      run: |
+        gcc -O2 -shared -o sqlite-lua-latest.dll src/lua.c \
+          -Ilua-src \
+          -I/mingw64/include \
+          lua-src/liblua.a \
+          -static-libgcc \
+          -Wl,--export-all-symbols
+
+    - name: Upload Windows DLL
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-v55-windows
+        path: |
+          *.dll
+          README.md
+
+  # === Linux 靜態編譯 (獨立 SO) ===
+  build-linux-latest-lua:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 拉取官方最新的 Lua 5.5.0 原始碼
+    - name: Checkout Latest Lua Source
+      uses: actions/checkout@v4
+      with:
+        repository: lua/lua
+        ref: v5.5.0
+        path: lua-src
+
+    - name: Install System SQLite
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libsqlite3-dev
+
+    # 編譯帶有 -fPIC 的新版 Lua 靜態庫
+    - name: Build New Lua Static Lib with fPIC (Linux)
+      run: |
+        cd lua-src
+        gcc -O2 -fPIC -c *.c
+        rm -f lua.o luac.o
+        ar rcu liblua.a *.o
+        ranlib liblua.a
+        cd ..
+
+    # 產出 Linux SO 成品
+    - name: Build Static SO with Latest Lua
+      run: |
+        gcc -O2 -shared -fPIC -o sqlite-lua-latest.so src/lua.c \
+          -Ilua-src \
+          lua-src/liblua.a
+
+    - name: Upload Linux SO
+      uses: actions/upload-artifact@v4
+      with:
+        name: sqlite-lua-v55-linux
+        path: |
+          *.so
+          README.md
+```
+
+---
+
+## 💎 2. 升級至 Lua 5.5 版本的核心優勢
+
+將底層引擎升級至最新世代的 Lua 5.5，能為 SQLite 資料庫帶來以下三大顯著提升：
+
+### 📈 一、記憶體消耗大幅降低（記憶體節省 ~60%）
+* **技術細節**：Lua 5.5 對底層的陣列與雜湊表（Table）內部結構進行了徹底重構。
+* **應用場景**：當您在 SQLite 內調用 Lua 來儲存、快取或處理大量資料列（Data Rows）時，Lua 虛擬機在資料庫記憶體（Process RSS）中的開銷將顯著降低，非常適合嵌入式或輕量化系統。
+
+### 🌐 二、原生 UTF-8 多國語言增強
+* **技術細節**：新版 Lua 內建了更完善的 **`utf8.offset`** 增強，並新增了 **`string.isutf8`** 內建函數。
+* **應用場景**：您現在可以直接在 SQL 查詢中，透過 Lua 迅速檢查某個文字欄位是否為正確的 UTF-8 編碼，或是動態計算多國語言文字的精確長度，完全避免傳統字串切分造成的編碼破裂與報錯。
+
+### 🛡️ 三、更強固的沙盒與資源安全隔離
+* **技術細節**：5.5 版本進一步優化了全域變數存取機制（減少非預期的全域變數污染）與垃圾回收（GC）速度。
+* **應用場景**：當您在同一個資料庫連線中多次呼叫 `SELECT createlua();` 建立多個獨立的 Lua 執行環境時，各個環境之間的符號干涉風險更低，能提供更安全、高隔離的沙盒運作空間。
+
+---
+
+## ⚠️ 版本選擇與架構取捨小結
+
+* **如果您追求「最新功能與超低記憶體開銷」**：請選用此 **Lua 5.5 靜態版**，它能帶給您現代化的 C API 相容性與強大的 UTF-8 內建支援。
+* **如果您追求「極致的迴圈運算速度」**：請繼續使用 **LuaJIT 版本**。但請注意，LuaJIT 由於架構限制，語法與 API 永遠鎖定在 Lua 5.1 世代，無法享有 Lua 5.4/5.5 的 Table 重構與新版字串內建函數。
+
+
+# 🚀 SQLite-Lua 延伸模組：升級 Lua 5.4 / 5.5 靜態編譯指南
+
+本文件記錄了如何將 SQLite-Lua 延伸模組（自帶內嵌 Lua 引擎）升級至最新的 **Lua 5.4** 或 **Lua 5.5 版本**。
+
 在新版架構中，由於 Lua 官方已原生支援 `lua_compare` 與 `LUA_OPEQ` 等現代 API，編譯時**完全不需要再使用任何代碼補丁（Polyfill）**。然而，針對新版原始碼獨有的「一鍵編譯機制」，我們採取了精確排除的編譯策略，以達到全平台（Windows DLL / Linux SO）的純靜態獨立封裝。
 
 ---
