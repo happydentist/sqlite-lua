@@ -59,3 +59,68 @@ SQLite 的 sqlean 擴充功能中的 eval() 函數無法直接產生多個獨立
 ## 總結
 abiliojr/sqlite-lua 的定位是讓你能在 SQL 中使用 Lua 的邏輯運算或字串處理。若要產生多欄位的網格資料，最完美的組合是「Lua 負責生成 JSON 結構」+「SQLite JSON 函數負責展開欄位」。
 
+# 那假如 搭配 0x09/sqlite-statement-vtab 呢
+如果搭配 [0x09/sqlite-statement-vtab](https://github.com/0x09/sqlite-statement-vtab) 擴充套件，答案是：可以，而且這正是最完美的解決方案！ [1] 
+sqlite-statement-vtab 本身就是為了解決 SQLite 缺乏動態資料表值函數（Table-Valued Function）而設計的。它允許你將一段帶有參數的 SQL 語句包裝成一個虛擬資料表（Virtual Table），並在查詢時動態帶入參數，直接輸出標準的 多欄位獨立結果（Grid）。 [2] 
+在這種架構下，你甚至不需要 sqlean 的 eval() 函數了，因為 statement-vtab 已經完美取代了動態執行的需求。
+
+---
+## 如何運作？（實際範例）
+statement-vtab 允許你在定義虛擬資料表時使用 SQLite 的參數綁定語法（如 ? 或 :name）。這些參數會自動變成虛擬資料表的隱藏輸入欄位。
+### 步驟 1：建立一個參數化的虛擬資料表（Grid 範本）
+你可以先宣告一個固定的多欄位結構，其中的查詢條件或計算邏輯是動態的： [2] 
+```sql
+-- 建立一個名為 dynamic_grid 的虛擬資料表-- 內部的 SELECT 語句使用了兩個匿名參數 `?`CREATE VIRTUAL TABLE temp.dynamic_grid USING statement((
+    SELECT 
+        ?1 AS input_a, 
+        ?2 AS input_b, 
+        (?1 + ?2) AS sum_result,
+        (?1 * ?2) AS product_result
+));
+```
+### 步驟 2：直接像呼叫函數一樣查詢它（產生 Grid）
+當你查詢這個虛擬資料表時，可以直接把參數傳進去，它會立刻返回一列包含 4 個獨立標準 SQL 欄位的 Grid 資料：
+```sql
+-- 以函數語法帶入參數 10 與 20
+SELECT * FROM temp.dynamic_grid(10, 20);
+```
+輸出結果（標準 Grid）：
+
+| input_a | input_b | sum_result | product_result |
+|---|---|---|---|
+| 10 | 20 | 30 | 200 |
+
+---
+## 進階：搭配 JSON 擴充功能實現「終極動態欄位」
+如果你連「欄位數量」和「欄位名稱」都想完全動態決定，社群中[最推崇的黑魔法](https://sqlite.org/forum/info/9cf51e6df7b023c4)是將 statement-vtab 與 json_each（或 json_tree）結合。 
+你可以建立一個專門接收 JSON 字串的 statement_vtab，在內部將 JSON 拆解成獨立的網格：
+```sql
+-- 1. 建立一個負責解析動態 JSON 的虛擬資料表CREATE VIRTUAL TABLE temp.json_parser USING statement((
+    SELECT 
+        json_extract(value, '$.id') AS user_id,
+        json_extract(value, '$.name') AS user_name,
+        json_extract(value, '$.role') AS user_role
+    FROM json_each(?1)
+));
+-- 2. 查詢時，動態傳入整串 JSON 陣列，直接吐出標準的 SQL 多欄位網格SELECT * FROM temp.json_parser('[
+    {"id": 1, "name": "Alice", "role": "Admin"},
+    {"id": 2, "name": "Bob", "role": "User"}
+]');
+```
+輸出結果（標準 Grid）：
+
+| user_id | user_name | user_role |
+|---|---|---|
+| 1 | Alice | Admin |
+| 2 | Bob | User |
+
+------------------------------
+## 總結比較
+
+| 方案組合 | 能否單一 SQL 產生 Grid？ | 缺點 / 限制 |
+|---|---|---|
+| sqlean eval() | ❌ 否 | 只能回傳單一字串。 |
+| abiliojr sqlite-lua | ❌ 否 | 依然受限於純量函數，必須搭配 JSON 手動轉換。 |
+| 0x09 sqlite-statement-vtab | ⭕ 可以 | 運作時必須先預定義好內部的 SQL 骨架，或透過 JSON 傳遞動態結構。 |
+
+使用 sqlite-statement-vtab 可以完美解決你的動態多欄位需求。
